@@ -44,7 +44,6 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
             pres.S_MOTION: [set_req.V_ARMED],
             pres.S_SMOKE: [set_req.V_ARMED],
             pres.S_LIGHT: [set_req.V_LIGHT],
-            pres.S_LOCK: [set_req.V_LOCK_STATUS],
             pres.S_IR: [set_req.V_IR_SEND],
         }
         device_class_map = {
@@ -52,7 +51,6 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
             pres.S_MOTION: MySensorsSwitch,
             pres.S_SMOKE: MySensorsSwitch,
             pres.S_LIGHT: MySensorsSwitch,
-            pres.S_LOCK: MySensorsSwitch,
             pres.S_IR: MySensorsIRSwitch,
         }
         if float(gateway.protocol_version) >= 1.5:
