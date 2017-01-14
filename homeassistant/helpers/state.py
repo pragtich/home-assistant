@@ -153,28 +153,28 @@ def async_reproduce_state(hass, states, blocking=False):
                 "reproduce_state: Unable to reproduce state %s (1)", state)
             continue
 
-        service = None
+        services = []
         for _service in domain_services.keys():
             if (_service in SERVICE_ATTRIBUTES and
                     all(attr in state.attributes
                         for attr in SERVICE_ATTRIBUTES[_service]) or
                     _service in SERVICE_TO_STATE and
                     SERVICE_TO_STATE[_service] == state.state):
-                service = _service
-            if (_service in SERVICE_TO_STATE and
-                    SERVICE_TO_STATE[_service] == state.state):
-                break
+                services.append(_service)
 
-        if not service:
+        if not services:
             _LOGGER.warning(
                 "reproduce_state: Unable to reproduce state %s (2)", state)
             continue
 
-        # We group service calls for entities by service call
-        # json used to create a hashable version of dict with maybe lists in it
-        key = (service_domain, service,
-               json.dumps(dict(state.attributes), sort_keys=True))
-        to_call[key].append(state.entity_id)
+        # Make a set of services to only call each service once eventually
+        for service in set(services):
+            # We group service calls for entities by service call
+            # json used to create a hashable version of dict with maybe lists
+            # in it
+            key = (service_domain, service,
+                   json.dumps(dict(state.attributes), sort_keys=True))
+            to_call[key].append(state.entity_id)
 
     domain_tasks = {}
     for (service_domain, service, service_data), entity_ids in to_call.items():
