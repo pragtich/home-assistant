@@ -67,7 +67,7 @@ SENSOR_TYPES = {
     'swell_dir_worded': ['Swell Direction', None],
     'swell_height': ['Swell Height', 'm'],
     'swell_period': ['Swell Period', None],
-    'vis_km': ['Visability km', 'km'],
+    'vis_km': ['Visibility km', 'km'],
     'weather': ['Weather', None],
     'wind_dir': ['Wind Direction', None],
     'wind_spd_kmh': ['Wind Speed kmh', 'km/h'],
