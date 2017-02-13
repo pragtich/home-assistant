@@ -14,6 +14,7 @@ from homeassistant.const import (
     CONF_PASSWORD, CONF_WHITELIST)
 from homeassistant.helpers import state as state_helper
 import homeassistant.helpers.config_validation as cv
+from util.unit_system import get_unit
 
 REQUIREMENTS = ['influxdb==3.0.0']
 
@@ -109,6 +110,8 @@ def setup(hass, config):
         except ValueError:
             _state = state.state
             _state_key = "state"
+
+        entity_unit = state.attributes.get('unit_of_measurement')
 
         if override_measurement:
             measurement = override_measurement

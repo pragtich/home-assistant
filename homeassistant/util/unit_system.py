@@ -54,6 +54,7 @@ BITCOIN = 'bitcoin'
 WIND_SPEED = 'wind_speed'
 RAIN = 'rain'
 VISIBILITY = 'visibility'
+CPU_SPEED = 'cpu_speed'
 
 LENGTH_UNITS = [
     LENGTH_MILES,
@@ -124,7 +125,8 @@ COMPUTER_UNITS = {
     BATTERY_LEVEL: '%',
     STORAGE_USED: '%',
     COUNT: 'count',
-    BANDWIDTH: 'Mb/s'  # type: str
+    BANDWIDTH: 'Mb/s',  # type: str
+    CPU_SPEED: 'GHz',
 }
 
 WEATHER_UNITS = {
@@ -138,6 +140,15 @@ CURRENCY = {
     US_DOLLAR: 'USD',
     BITCOIN: 'BTC',
 }
+
+
+def get_unit(unit_type):
+    """Return the unit of the unit type. Check all unit systems."""
+    unit_systems = SI_UNITS, COMPUTER_UNITS, WEATHER_UNITS, CURRENCY
+    unit = next((unit_system.get(unit_type)
+                for unit_system in unit_systems
+                if unit_system.get(unit_type) is not None), None)
+    return unit
 
 
 def is_valid_unit(
