@@ -82,6 +82,24 @@ microsoft_face:
         description: Camera to take a picture.
         example: camera.door
 
+mysensors:
+  update_firmware:
+    description: Update firmware of one or more nodes over the air.
+
+    fields:
+      entity_id:
+        description: Name(s) of entities of corresponding node(s) to update firmware.
+        example: 'sensor.kitchen_temp'
+      firmware_type:
+        description: Firmware type (positive integer).
+        example: '1'
+      firmware_version:
+        description: Firmware version (positive integer).
+        example: '1'
+      firmware_path:
+        description: Path to the hex file for the firmware.
+        example: '/path/to/the/firmware.hex'
+
 verisure:
   capture_smartcam:
     description: Capture a new image from a smartcam.

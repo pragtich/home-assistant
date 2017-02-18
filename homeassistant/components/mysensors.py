@@ -17,8 +17,9 @@ import voluptuous as vol
 from homeassistant.components.mqtt import (
     valid_publish_topic, valid_subscribe_topic)
 from homeassistant.const import (
-    ATTR_BATTERY_LEVEL, CONF_NAME, CONF_OPTIMISTIC, EVENT_HOMEASSISTANT_START,
-    EVENT_HOMEASSISTANT_STOP, STATE_OFF, STATE_ON)
+    ATTR_BATTERY_LEVEL, ATTR_ENTITY_ID, CONF_NAME, CONF_OPTIMISTIC,
+    EVENT_HOMEASSISTANT_START, EVENT_HOMEASSISTANT_STOP, STATE_OFF, STATE_ON)
+from homeassistant.core import split_entity_id
 from homeassistant.helpers import discovery
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.dispatcher import (
@@ -27,7 +28,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.loader import get_component
 from homeassistant.setup import setup_component
 
-REQUIREMENTS = ['pymysensors==0.11.1']
+REQUIREMENTS = ['pymysensors==0.12.1']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +36,10 @@ ATTR_CHILD_ID = 'child_id'
 ATTR_DESCRIPTION = 'description'
 ATTR_DEVICE = 'device'
 ATTR_DEVICES = 'devices'
+ATTR_FW_TYPE = 'firmware_type'
+ATTR_FW_VERSION = 'firmware_version'
+ATTR_FW_PATH = 'firmware_path'
+ATTR_GATEWAY_ID = 'gateway_id'
 ATTR_NODE_ID = 'node_id'
 
 CONF_BAUD_RATE = 'baud_rate'
@@ -62,6 +67,7 @@ MYSENSORS_GATEWAYS = 'mysensors_gateways'
 MYSENSORS_PLATFORM_DEVICES = 'mysensors_devices_{}'
 PLATFORM = 'platform'
 SCHEMA = 'schema'
+SERVICE_UPDATE_FIRMWARE = 'update_firmware'
 SIGNAL_CALLBACK = 'mysensors_callback_{}_{}_{}_{}'
 TYPE = 'type'
 
@@ -133,6 +139,13 @@ def deprecated(key):
         return config
     return validator
 
+
+OTA_SERVICE_SCHEMA = vol.Schema({
+    vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+    vol.Required(ATTR_FW_TYPE): cv.positive_int,
+    vol.Required(ATTR_FW_VERSION): cv.positive_int,
+    vol.Required(ATTR_FW_PATH): cv.isfile,
+})
 
 NODE_SCHEMA = vol.Schema({
     cv.positive_int: {
@@ -371,6 +384,30 @@ def setup(hass, config):
         return False
 
     hass.data[MYSENSORS_GATEWAYS] = gateways
+
+    def update_firmware(service):
+        """Update firmware of node(s)."""
+        entity_ids = service.data.get(ATTR_ENTITY_ID)
+        fw_type = service.data.get(ATTR_FW_TYPE)
+        fw_version = service.data.get(ATTR_FW_VERSION)
+        fw_path = service.data.get(ATTR_FW_PATH)
+        domains = [split_entity_id(entity_id) for entity_id in entity_ids]
+        all_devices = [
+            device for domain in domains
+            for device in get_mysensors_devices(hass, domain).values()]
+        devices = [
+            device for device in all_devices
+            if hasattr(device, 'entity_id') and device.entity_id in entity_ids]
+        gw_nodes = defaultdict(list)
+        for device in devices:
+            gw_nodes[id(device.gateway)].append(device.node_id)
+        for gateway_id, nodes in gw_nodes.items():
+            gateways[gateway_id].update_fw(
+                list(set(nodes)), fw_type, fw_version, fw_path)
+
+    hass.services.register(
+        DOMAIN, SERVICE_UPDATE_FIRMWARE, update_firmware,
+        schema=OTA_SERVICE_SCHEMA)
 
     return True
 
