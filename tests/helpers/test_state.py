@@ -15,6 +15,8 @@ from homeassistant.const import (
     STATE_LOCKED, STATE_UNLOCKED,
     STATE_ON, STATE_OFF,
     STATE_HOME, STATE_NOT_HOME)
+from homeassistant.components.climate import (
+    SERVICE_SET_OPERATION_MODE, SERVICE_SET_TEMPERATURE)
 from homeassistant.components.media_player import (
     SERVICE_PLAY_MEDIA, SERVICE_MEDIA_PLAY, SERVICE_MEDIA_PAUSE)
 from homeassistant.components.sun import (STATE_ABOVE_HORIZON,
@@ -202,6 +204,35 @@ class TestStateHelpers(unittest.TestCase):
         self.assertEqual('media_player', last_call.domain)
         self.assertEqual(SERVICE_MEDIA_PAUSE, last_call.service)
         self.assertEqual(['media_player.test'],
+                         last_call.data.get('entity_id'))
+
+    def test_reproduce_multi_climate_states(self):
+        """Test reproduce_state with multiple climate services."""
+        operation_calls = mock_service(
+            self.hass, 'climate', SERVICE_SET_OPERATION_MODE)
+        temp_calls = mock_service(
+            self.hass, 'climate', SERVICE_SET_TEMPERATURE)
+
+        self.hass.states.set('climate.test', 'off')
+
+        climate_attributes = {'operation_mode': 'cool', 'temperature': 24.0}
+
+        state.reproduce_state(self.hass, ha.State(
+            'climate.test', 'None', climate_attributes))
+
+        self.hass.block_till_done()
+
+        self.assertTrue(len(operation_calls) > 0)
+        last_call = operation_calls[-1]
+        self.assertEqual('climate', last_call.domain)
+        self.assertEqual(SERVICE_SET_OPERATION_MODE, last_call.service)
+        self.assertEqual(['climate.test'],
+                         last_call.data.get('entity_id'))
+        self.assertTrue(len(temp_calls) > 0)
+        last_call = temp_calls[-1]
+        self.assertEqual('climate', last_call.domain)
+        self.assertEqual(SERVICE_SET_TEMPERATURE, last_call.service)
+        self.assertEqual(['climate.test'],
                          last_call.data.get('entity_id'))
 
     def test_reproduce_bad_state(self):
