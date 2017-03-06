@@ -132,7 +132,8 @@ def async_reproduce_state(hass, states, blocking=False):
     if isinstance(states, State):
         states = [states]
 
-    to_call = defaultdict(list)
+    state_to_call = defaultdict(list)
+    attr_to_call = defaultdict(list)
 
     for state in states:
 
@@ -153,40 +154,50 @@ def async_reproduce_state(hass, states, blocking=False):
                 "reproduce_state: Unable to reproduce state %s (1)", state)
             continue
 
-        services = []
+        state_services = []
+        attr_services = []
         for _service in domain_services.keys():
             if (_service in SERVICE_ATTRIBUTES and
                     all(attr in state.attributes
-                        for attr in SERVICE_ATTRIBUTES[_service]) or
-                    _service in SERVICE_TO_STATE and
+                        for attr in SERVICE_ATTRIBUTES[_service])):
+                attr_services.append(_service)
+            if (_service in SERVICE_TO_STATE and
                     SERVICE_TO_STATE[_service] == state.state):
-                services.append(_service)
+                state_services.append(_service)
 
-        if not services:
+        if not state_services and not attr_services:
             _LOGGER.warning(
                 "reproduce_state: Unable to reproduce state %s (2)", state)
             continue
 
-        # Make a set of services to only call each service once eventually
-        for service in set(services):
-            # We group service calls for entities by service call
-            # json used to create a hashable version of dict with maybe lists
-            # in it
-            key = (service_domain, service,
-                   json.dumps(dict(state.attributes), sort_keys=True))
-            to_call[key].append(state.entity_id)
+        # Group services that change state separate from services that change
+        # state attributes
+        for services, to_call in (
+                state_services, state_to_call), (attr_services, attr_to_call):
+            # Make a set of services to only call each service once eventually
+            for service in set(services):
+                # We group service calls for entities by service call
+                # json used to create a hashable version of dict with maybe
+                # lists in it
+                key = (service_domain, service,
+                       json.dumps(dict(state.attributes), sort_keys=True))
+                to_call[key].append(state.entity_id)
 
-    domain_tasks = {}
-    for (service_domain, service, service_data), entity_ids in to_call.items():
-        data = json.loads(service_data)
-        data[ATTR_ENTITY_ID] = entity_ids
+    state_tasks = {}
+    attr_tasks = {}
+    for domain_tasks, to_call in (state_tasks, state_to_call), (
+            attr_tasks, attr_to_call):
+        for (service_domain, service, service_data), entity_ids in \
+                to_call.items():
+            data = json.loads(service_data)
+            data[ATTR_ENTITY_ID] = entity_ids
 
-        if service_domain not in domain_tasks:
-            domain_tasks[service_domain] = []
+            if service_domain not in domain_tasks:
+                domain_tasks[service_domain] = []
 
-        domain_tasks[service_domain].append(
-            hass.services.async_call(service_domain, service, data, blocking)
-        )
+            domain_tasks[service_domain].append(
+                hass.services.async_call(
+                    service_domain, service, data, blocking))
 
     @asyncio.coroutine
     def async_handle_service_calls(coro_list):
@@ -194,10 +205,12 @@ def async_reproduce_state(hass, states, blocking=False):
         for coro in coro_list:
             yield from coro
 
-    execute_tasks = [async_handle_service_calls(coro_list)
-                     for coro_list in domain_tasks.values()]
-    if execute_tasks:
-        yield from asyncio.wait(execute_tasks, loop=hass.loop)
+    # Finish state tasks before attribute tasks
+    for domain_tasks in state_tasks, attr_tasks:
+        execute_tasks = [async_handle_service_calls(coro_list)
+                         for coro_list in domain_tasks.values()]
+        if execute_tasks:
+            yield from asyncio.wait(execute_tasks, loop=hass.loop)
 
 
 def state_as_number(state):
