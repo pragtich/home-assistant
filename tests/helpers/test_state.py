@@ -248,6 +248,19 @@ class TestStateHelpers(unittest.TestCase):
         self.assertTrue(len(calls) == 0)
         self.assertEqual('off', self.hass.states.get('light.test').state)
 
+    def test_reproduce_bad_domain(self):
+        """Test reproduce_state with bad domain."""
+        calls = mock_service(self.hass, 'light', SERVICE_TURN_ON)
+
+        self.hass.states.set('bad.test', 'off')
+
+        state.reproduce_state(self.hass, ha.State('bad.test', 'on'))
+
+        self.hass.block_till_done()
+
+        self.assertTrue(len(calls) == 0)
+        self.assertEqual('off', self.hass.states.get('bad.test').state)
+
     def test_reproduce_group(self):
         """Test reproduce_state with group."""
         light_calls = mock_service(self.hass, 'light', SERVICE_TURN_ON)
