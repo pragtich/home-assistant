@@ -206,7 +206,7 @@ class TestStateHelpers(unittest.TestCase):
         self.assertEqual(['media_player.test'],
                          last_call.data.get('entity_id'))
 
-    def test_reproduce_multi_climate_states(self):
+    def test_reproduce_multiple_states(self):
         """Test reproduce_state with multiple climate services."""
         operation_calls = mock_service(
             self.hass, 'climate', SERVICE_SET_OPERATION_MODE)
