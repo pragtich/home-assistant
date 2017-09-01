@@ -53,10 +53,11 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         if entity_ids:
             _devices = [device for device in devices.values()
                         if isinstance(device, MySensorsIRSwitch) and
-                        device.entity_id in entity_ids]
+                        device.available and device.entity_id in entity_ids]
         else:
             _devices = [device for device in devices.values()
-                        if isinstance(device, MySensorsIRSwitch)]
+                        if isinstance(device, MySensorsIRSwitch) and
+                        device.available]
 
         kwargs = {ATTR_IR_CODE: ir_code}
         for device in _devices:

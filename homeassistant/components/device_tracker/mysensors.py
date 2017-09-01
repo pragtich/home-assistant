@@ -14,14 +14,12 @@ def setup_scanner(hass, config, see, discovery_info=None):
     """Set up the MySensors device scanner."""
     new_devices = mysensors.setup_mysensors_platform(
         hass, DOMAIN, discovery_info, MySensorsDeviceScanner,
-        device_args=(see, ))
+        device_args=(hass, see))
     if not new_devices:
         return False
 
     for device in new_devices:
-        dev_id = (
-            id(device.gateway), device.node_id, device.child_id,
-            device.value_type)
+        dev_id = id(device.gateway), device.node_id, device.child_id
         dispatcher_connect(
             hass, mysensors.SIGNAL_CALLBACK.format(*dev_id),
             device.update_callback)
@@ -32,14 +30,21 @@ def setup_scanner(hass, config, see, discovery_info=None):
 class MySensorsDeviceScanner(mysensors.MySensorsDevice):
     """Represent a MySensors scanner."""
 
-    def __init__(self, see, *args):
+    def __init__(self, hass, see, *args):
         """Set up instance."""
         super().__init__(*args)
+        self.hass = hass
         self.see = see
 
     def update_callback(self):
         """Update the device."""
         self.update()
+        if not self.available:
+            self._create_notification(self.hass)
+            return
+        else:
+            if self._notification_id is not None:
+                self._dismiss_notification(self.hass)
         node = self.gateway.sensors[self.node_id]
         child = node.children[self.child_id]
         position = child.values[self.value_type]

@@ -58,11 +58,20 @@ DEFAULT_VERSION = '1.4'
 DOMAIN = 'mysensors'
 
 MQTT_COMPONENT = 'mqtt'
+MYSENSORS_DOCS_LINK = '<a href="{}" target="_blank">{}</a>'
+MYSENSORS_DOCS_URL = 'https://home-assistant.io/components/{}.mysensors/'
 MYSENSORS_GATEWAYS = 'mysensors_gateways'
+MYSENSORS_PERSISTENT_MESSAGE = (
+    'Missing correct values for node {} child {}.<br />'
+    'Please make sure the sketch of your device sends the '
+    'required values for the presented child.<br />'
+    'See the MySensors documentation for the platform(s):<br />{}')
 MYSENSORS_PLATFORM_DEVICES = 'mysensors_devices_{}'
 PLATFORM = 'platform'
 SCHEMA = 'schema'
-SIGNAL_CALLBACK = 'mysensors_callback_{}_{}_{}_{}'
+SIGNAL_CALLBACK = 'mysensors_callback_{}_{}_{}'
+TOO_MANY_VALUE_TYPES = (
+    "multiple value types per child are not supported for this platform")
 TYPE = 'type'
 
 
@@ -381,20 +390,31 @@ def setup(hass, config):
     return True
 
 
+def get_child_value_type(gateway, child):
+    """Return value_type for child."""
+    pres = gateway.const.Presentation
+    set_req = gateway.const.SetReq
+    s_name = next(
+        (member.name for member in pres if member.value == child.type), None)
+    child_schemas = MYSENSORS_CONST_SCHEMA.get(s_name, [])
+    value_type = next(
+        (member.value for schema in child_schemas for member in set_req
+         if member.name == schema[TYPE] and member.value in child.values),
+        None)
+    return value_type
+
+
 def validate_child(gateway, node_id, child):
     """Validate that a child has the correct values according to schema.
 
-    Return a dict of platform with a list of device ids for validated devices.
+    Return a dict of platform and device ids for validated devices.
     """
-    validated = defaultdict(list)
+    validated = {}
 
-    if not child.values:
-        _LOGGER.debug(
-            "No child values for node %s child %s", node_id, child.id)
-        return validated
     if gateway.sensors[node_id].sketch_name is None:
         _LOGGER.debug("Node %s is missing sketch name", node_id)
         return validated
+
     pres = gateway.const.Presentation
     set_req = gateway.const.SetReq
     s_name = next(
@@ -402,12 +422,17 @@ def validate_child(gateway, node_id, child):
     if s_name not in MYSENSORS_CONST_SCHEMA:
         _LOGGER.warning("Child type %s is not supported", s_name)
         return validated
-    child_schemas = MYSENSORS_CONST_SCHEMA[s_name]
 
-    def msg(name):
+    child_schemas = MYSENSORS_CONST_SCHEMA[s_name]
+    _child_schema = child.get_schema(gateway.protocol_version)
+    dev_id = id(gateway), node_id, child.id
+
+    def msg(schema):
         """Return a message for an invalid schema."""
-        return "{} requires value_type {}".format(
-            pres(child.type).name, set_req[name].name)
+        required = schema.get(SCHEMA, {schema[TYPE]: ''})
+        required_keys = " and ".join(required.keys())
+        return "{} requires {}".format(
+            pres(child.type).name, required_keys)
 
     for schema in child_schemas:
         platform = schema[PLATFORM]
@@ -415,26 +440,32 @@ def validate_child(gateway, node_id, child):
         value_type = next(
             (member.value for member in set_req if member.name == v_name),
             None)
-        if value_type is None:
+        if (value_type is None or
+                value_type not in child.values and platform in validated):
+            # only validate one schema per platform
             continue
-        _child_schema = child.get_schema(gateway.protocol_version)
-        vol_schema = _child_schema.extend(
-            {vol.Required(set_req[key].value, msg=msg(key)):
+
+        vol_schemas = []
+        vol_schemas.append(vol.Schema({
+            vol.Exclusive(member.value, 'valid', msg=TOO_MANY_VALUE_TYPES):
+            _child_schema.schema.get(member.value, cv.string)
+            for _schema in child_schemas for member in set_req
+            if member.name == _schema[TYPE]
+            and platform == _schema[PLATFORM]}))
+        vol_schemas.append(_child_schema.extend(
+            {vol.Inclusive(set_req[key].value, 'valid', msg=msg(schema)):
              _child_schema.schema.get(set_req[key].value, val)
-             for key, val in schema.get(SCHEMA, {v_name: cv.string}).items()},
-            extra=vol.ALLOW_EXTRA)
+             for key, val in schema.get(SCHEMA, {v_name: cv.string}).items()}))
         try:
-            vol_schema(child.values)
+            for vol_schema in vol_schemas:
+                vol_schema(child.values)
         except vol.Invalid as exc:
-            level = (logging.WARNING if value_type in child.values
-                     else logging.DEBUG)
-            _LOGGER.log(
-                level,
+            _LOGGER.warning(
                 "Invalid values: %s: %s platform: node %s child %s: %s",
                 child.values, platform, node_id, child.id, exc)
             continue
-        dev_id = id(gateway), node_id, child.id, value_type
-        validated[platform].append(dev_id)
+
+        validated[platform] = dev_id
     return validated
 
 
@@ -451,8 +482,8 @@ def discover_persistent_devices(hass, gateway):
         node = gateway.sensors[node_id]
         for child in node.children.values():
             validated = validate_child(gateway, node_id, child)
-            for platform, dev_ids in validated.items():
-                new_devices[platform].extend(dev_ids)
+            for platform, dev_id in validated.items():
+                new_devices[platform].append(dev_id)
     for platform, dev_ids in new_devices.items():
         discover_mysensors_platform(hass, platform, dev_ids)
 
@@ -483,16 +514,12 @@ def gw_callback_factory(hass):
         # Update all platforms for the device via dispatcher.
         # Add/update entity if schema validates to true.
         validated = validate_child(msg.gateway, msg.node_id, child)
-        for platform, dev_ids in validated.items():
+        for platform, dev_id in validated.items():
             devices = get_mysensors_devices(hass, platform)
-            new_dev_ids = []
-            for dev_id in dev_ids:
-                if dev_id in devices:
-                    signals.append(SIGNAL_CALLBACK.format(*dev_id))
-                else:
-                    new_dev_ids.append(dev_id)
-            if new_dev_ids:
-                discover_mysensors_platform(hass, platform, new_dev_ids)
+            if dev_id in devices:
+                signals.append(SIGNAL_CALLBACK.format(*dev_id))
+            else:
+                discover_mysensors_platform(hass, platform, [dev_id])
         for signal in set(signals):
             # Only one signal per device is needed.
             # A device can have multiple platforms, ie multiple schemas.
@@ -541,7 +568,7 @@ def setup_mysensors_platform(
         devices = get_mysensors_devices(hass, domain)
         if dev_id in devices:
             continue
-        gateway_id, node_id, child_id, value_type = dev_id
+        gateway_id, node_id, child_id = dev_id
         gateway = get_mysensors_gateway(hass, gateway_id)
         if not gateway:
             continue
@@ -553,8 +580,7 @@ def setup_mysensors_platform(
         name = get_mysensors_name(gateway, node_id, child_id)
 
         # python 3.4 cannot unpack inside tuple, but combining tuples works
-        args_copy = device_args + (
-            gateway, node_id, child_id, name, value_type)
+        args_copy = device_args + (gateway, node_id, child_id, name)
         devices[dev_id] = device_class_copy(*args_copy)
         new_devices.append(devices[dev_id])
     if new_devices:
@@ -567,16 +593,22 @@ def setup_mysensors_platform(
 class MySensorsDevice(object):
     """Representation of a MySensors device."""
 
-    def __init__(self, gateway, node_id, child_id, name, value_type):
+    def __init__(self, gateway, node_id, child_id, name):
         """Set up the MySensors device."""
         self.gateway = gateway
         self.node_id = node_id
         self.child_id = child_id
         self._name = name
-        self.value_type = value_type
+        self.value_type = None
         child = gateway.sensors[node_id].children[child_id]
         self.child_type = child.type
+        self._notification_id = None
         self._values = {}
+
+    @property
+    def available(self):
+        """Return true if entity is available."""
+        return self.value_type in self._values
 
     @property
     def name(self):
@@ -604,10 +636,12 @@ class MySensorsDevice(object):
         return attr
 
     def update(self):
-        """Update the controller with the latest value from a sensor."""
+        """Update the instance with the latest values from the gateway."""
         node = self.gateway.sensors[self.node_id]
         child = node.children[self.child_id]
         set_req = self.gateway.const.SetReq
+        if self.value_type is None:
+            self.value_type = get_child_value_type(self.gateway, child)
         for value_type, value in child.values.items():
             _LOGGER.debug(
                 "Entity update: %s: value_type %s, value = %s",
@@ -621,6 +655,25 @@ class MySensorsDevice(object):
             else:
                 self._values[value_type] = value
 
+    def _create_notification(self, hass):
+        self._notification_id = '{}{}{}'.format(
+            id(self.gateway), self.node_id, self.child_id)
+        s_name = self.gateway.const.Presentation(self.child_type).name
+        urls = [
+            MYSENSORS_DOCS_URL.format(schema[PLATFORM])
+            for schema in MYSENSORS_CONST_SCHEMA[s_name]]
+        links = [
+            MYSENSORS_DOCS_LINK.format(url, url) for url in urls]
+        message = MYSENSORS_PERSISTENT_MESSAGE.format(
+            self.node_id, self.child_id, '<br />'.join(links))
+        hass.components.persistent_notification.create(
+            message, title='MySensors {}'.format(self.name),
+            notification_id=self._notification_id)
+
+    def _dismiss_notification(self, hass):
+        hass.components.persistent_notification.dismiss(self._notification_id)
+        self._notification_id = None
+
 
 class MySensorsEntity(MySensorsDevice, Entity):
     """Representation of a MySensors entity."""
@@ -630,11 +683,6 @@ class MySensorsEntity(MySensorsDevice, Entity):
         """Mysensor gateway pushes its state to HA."""
         return False
 
-    @property
-    def available(self):
-        """Return true if entity is available."""
-        return self.value_type in self._values
-
     def _async_update_callback(self):
         """Update the entity."""
         self.async_schedule_update_ha_state(True)
@@ -642,7 +690,16 @@ class MySensorsEntity(MySensorsDevice, Entity):
     @asyncio.coroutine
     def async_added_to_hass(self):
         """Register update callback."""
-        dev_id = id(self.gateway), self.node_id, self.child_id, self.value_type
+        dev_id = id(self.gateway), self.node_id, self.child_id
         async_dispatcher_connect(
             self.hass, SIGNAL_CALLBACK.format(*dev_id),
             self._async_update_callback)
+
+    def update(self):
+        """Update the instance with the latest values from the gateway."""
+        super().update()
+        if not self.available:
+            self._create_notification(self.hass)
+        else:
+            if self._notification_id is not None:
+                self._dismiss_notification(self.hass)
