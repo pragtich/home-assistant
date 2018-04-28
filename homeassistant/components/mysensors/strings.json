@@ -1,0 +1,27 @@
+{
+    "config": {
+        "title": "MySensors gateway",
+        "step": {
+            "init": {
+                "title": "Select a MySensors gateway to configure",
+                "data": {
+                    "gateway_type": "Gateway type"
+                }
+            },
+            "configure_gateway": {
+                "title": "Configure the MySensors gateway",
+                "data": {
+                    "baud_rate": "Baud rate",
+                    "device": "Device",
+                    "optimistic": "Optimistic",
+                    "persistence_file": "Persistence file",
+                    "retain": "Retain",
+                    "tcp_port": "TCP port",
+                    "topic_in_prefix": "Topic in prefix",
+                    "topic_out_prefix": "Topic out prefix",
+                    "version": "Version"
+                }
+            }
+        }
+    }
+}

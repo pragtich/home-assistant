@@ -8,53 +8,24 @@ import logging
 
 import voluptuous as vol
 
-from homeassistant.components.mqtt import (
-    valid_publish_topic, valid_subscribe_topic)
-from homeassistant.const import CONF_OPTIMISTIC
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 
+# Loading the config flow file will register the flow
+from .config_flow import MySensorsFlowHandler  # noqa
 from .const import (
-    ATTR_DEVICES, CONF_BAUD_RATE, CONF_DEVICE, CONF_GATEWAYS,
-    CONF_NODES, CONF_PERSISTENCE, CONF_PERSISTENCE_FILE, CONF_RETAIN,
-    CONF_TCP_PORT, CONF_TOPIC_IN_PREFIX, CONF_TOPIC_OUT_PREFIX, CONF_VERSION,
-    DOMAIN, MYSENSORS_GATEWAYS)
+    ATTR_DEVICES, CONF_DEVICE, CONF_GATEWAYS, CONF_NODE_NAME, DOMAIN,
+    ENTRY_GATEWAY, GATEWAY_SCHEMA, MQTT_COMPONENT, MYSENSORS_GATEWAYS)
 from .device import get_mysensors_devices
-from .gateway import get_mysensors_gateway, setup_gateways, finish_setup
+from .gateway import (
+    async_setup_gateways, create_gateway, finish_setup, get_mysensors_gateway)
 
 REQUIREMENTS = ['pymysensors==0.16.0']
 
 _LOGGER = logging.getLogger(__name__)
 
 CONF_DEBUG = 'debug'
-CONF_NODE_NAME = 'name'
-
-DEFAULT_BAUD_RATE = 115200
-DEFAULT_TCP_PORT = 5003
-DEFAULT_VERSION = '1.4'
-
-
-def has_all_unique_files(value):
-    """Validate that all persistence files are unique and set if any is set."""
-    persistence_files = [
-        gateway.get(CONF_PERSISTENCE_FILE) for gateway in value]
-    if None in persistence_files and any(
-            name is not None for name in persistence_files):
-        raise vol.Invalid(
-            'persistence file name of all devices must be set if any is set')
-    if not all(name is None for name in persistence_files):
-        schema = vol.Schema(vol.Unique())
-        schema(persistence_files)
-    return value
-
-
-def is_persistence_file(value):
-    """Validate that persistence file path ends in either .pickle or .json."""
-    if value.endswith(('.json', '.pickle')):
-        return value
-    else:
-        raise vol.Invalid(
-            '{} does not end in either `.json` or `.pickle`'.format(value))
+CONF_PERSISTENCE = 'persistence'
 
 
 def deprecated(key):
@@ -64,57 +35,67 @@ def deprecated(key):
         if key not in config:
             return config
         _LOGGER.warning(
-            '%s option for %s is deprecated. Please remove %s from your '
-            'configuration file', key, DOMAIN, key)
+            "%s option for %s is deprecated. Please remove %s from your "
+            "configuration file", key, DOMAIN, key)
         config.pop(key)
         return config
     return validator
 
 
-NODE_SCHEMA = vol.Schema({
-    cv.positive_int: {
-        vol.Required(CONF_NODE_NAME): cv.string
-    }
-})
-
-GATEWAY_SCHEMA = {
-    vol.Required(CONF_DEVICE): cv.string,
-    vol.Optional(CONF_PERSISTENCE_FILE):
-        vol.All(cv.string, is_persistence_file),
-    vol.Optional(CONF_BAUD_RATE, default=DEFAULT_BAUD_RATE):
-        cv.positive_int,
-    vol.Optional(CONF_TCP_PORT, default=DEFAULT_TCP_PORT): cv.port,
-    vol.Optional(CONF_TOPIC_IN_PREFIX): valid_subscribe_topic,
-    vol.Optional(CONF_TOPIC_OUT_PREFIX): valid_publish_topic,
-    vol.Optional(CONF_NODES, default={}): NODE_SCHEMA,
-}
-
 CONFIG_SCHEMA = vol.Schema({
-    DOMAIN: vol.Schema(vol.All(deprecated(CONF_DEBUG), {
-        vol.Required(CONF_GATEWAYS): vol.All(
-            cv.ensure_list, has_all_unique_files, [GATEWAY_SCHEMA]),
-        vol.Optional(CONF_OPTIMISTIC, default=False): cv.boolean,
-        vol.Optional(CONF_PERSISTENCE, default=True): cv.boolean,
-        vol.Optional(CONF_RETAIN, default=True): cv.boolean,
-        vol.Optional(CONF_VERSION, default=DEFAULT_VERSION): cv.string,
-    }))
+    DOMAIN: vol.Schema(vol.All(
+        deprecated(CONF_DEBUG), {
+            vol.Required(CONF_GATEWAYS): vol.All(
+                cv.ensure_list, [
+                    vol.All(deprecated(CONF_PERSISTENCE), GATEWAY_SCHEMA)]),
+        }
+    ))
 }, extra=vol.ALLOW_EXTRA)
 
 
 async def async_setup(hass, config):
     """Set up the MySensors component."""
-    gateways = await setup_gateways(hass, config)
+    conf = config.get(DOMAIN, {})
+    hass.data[MYSENSORS_GATEWAYS] = {}
+
+    # User has configured gateways
+    if CONF_GATEWAYS in conf:
+        gateways = conf[CONF_GATEWAYS]
+    else:
+        # Component not specified in config, we're loaded via config entries
+        gateways = []
 
     if not gateways:
-        _LOGGER.error(
-            "No devices could be setup as gateways, check your configuration")
-        return False
+        return True
 
-    hass.data[MYSENSORS_GATEWAYS] = gateways
-
-    hass.async_add_job(finish_setup(hass, gateways))
+    await async_setup_gateways(hass, conf)
 
     return True
+
+
+async def async_setup_entry(hass, entry):
+    """Set up a MySensors gateway from a config entry."""
+    gateways = hass.data[MYSENSORS_GATEWAYS]
+    gateway_conf = entry.data[ENTRY_GATEWAY]
+
+    if gateway_conf[CONF_DEVICE] == MQTT_COMPONENT:
+        result = await hass.config_entries.async_forward_entry_setup(
+            entry, MQTT_COMPONENT)
+        if not result:
+            _LOGGER.error("Failed to set up %s component", MQTT_COMPONENT)
+            return False
+
+    ready_gateway = await hass.async_add_job(
+        create_gateway, hass, gateway_conf)
+    if ready_gateway is not None:
+        gateways[id(ready_gateway)] = ready_gateway
+
+        hass.async_add_job(finish_setup(hass, gateways))
+
+        return True
+    _LOGGER.error(
+        "Failed to create gateway for device %s", gateway_conf[CONF_DEVICE])
+    return False
 
 
 def _get_mysensors_name(gateway, node_id, child_id):

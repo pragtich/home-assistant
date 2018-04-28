@@ -15,12 +15,12 @@ from homeassistant.core import callback
 from homeassistant.helpers import discovery
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.setup import async_setup_component
 
 from .const import (
-    ATTR_DEVICES, CONF_BAUD_RATE, CONF_DEVICE, CONF_GATEWAYS, CONF_NODES,
-    CONF_PERSISTENCE, CONF_PERSISTENCE_FILE, CONF_RETAIN, CONF_TCP_PORT,
-    CONF_TOPIC_IN_PREFIX, CONF_TOPIC_OUT_PREFIX, CONF_VERSION, DOMAIN,
+    ATTR_DEVICES, CONF_BAUD_RATE, CONF_DEVICE, CONF_GATEWAY_TYPE,
+    CONF_GATEWAYS, CONF_MQTT, CONF_NODES, CONF_PERSISTENCE_FILE, CONF_RETAIN,
+    CONF_SERIAL, CONF_TCP, CONF_TCP_PORT, CONF_TOPIC_IN_PREFIX,
+    CONF_TOPIC_OUT_PREFIX, CONF_VERSION, DOMAIN, ENTRY_GATEWAY,
     MYSENSORS_CONST_SCHEMA, MYSENSORS_GATEWAYS, PLATFORM, SCHEMA,
     SIGNAL_CALLBACK, TYPE)
 from .device import get_mysensors_devices
@@ -28,7 +28,6 @@ from .device import get_mysensors_devices
 _LOGGER = logging.getLogger(__name__)
 
 GATEWAY_READY_TIMEOUT = 15.0
-MQTT_COMPONENT = 'mqtt'
 MYSENSORS_GATEWAY_READY = 'mysensors_gateway_ready_{}'
 
 
@@ -39,7 +38,7 @@ def is_serial_port(value):
         if value in ports:
             return value
         else:
-            raise vol.Invalid('{} is not a serial port'.format(value))
+            raise vol.Invalid("{} is not a serial port".format(value))
     else:
         return cv.isdevice(value)
 
@@ -50,7 +49,8 @@ def is_socket_address(value):
         socket.getaddrinfo(value, None)
         return value
     except OSError:
-        raise vol.Invalid('Device is not a valid domain name or ip address')
+        raise vol.Invalid(
+            "{} is not a valid domain name or ip address".format(value))
 
 
 def get_mysensors_gateway(hass, gateway_id):
@@ -61,41 +61,31 @@ def get_mysensors_gateway(hass, gateway_id):
     return gateways.get(gateway_id)
 
 
-async def setup_gateways(hass, config):
+async def async_setup_gateways(hass, mysensors_conf):
     """Set up all gateways."""
-    conf = config[DOMAIN]
-    gateways = {}
-
-    for index, gateway_conf in enumerate(conf[CONF_GATEWAYS]):
-        persistence_file = gateway_conf.get(
-            CONF_PERSISTENCE_FILE,
-            hass.config.path('mysensors{}.pickle'.format(index + 1)))
-        ready_gateway = await _get_gateway(
-            hass, config, gateway_conf, persistence_file)
-        if ready_gateway is not None:
-            gateways[id(ready_gateway)] = ready_gateway
-
-    return gateways
+    for gateway_conf in mysensors_conf[CONF_GATEWAYS]:
+        hass.async_add_job(hass.config_entries.flow.async_init(
+            DOMAIN, source='import', data={
+                ENTRY_GATEWAY: gateway_conf,
+            }
+        ))
 
 
-async def _get_gateway(hass, config, gateway_conf, persistence_file):
+async def create_gateway(hass, gateway_conf):
     """Return gateway after setup of the gateway."""
     from mysensors import mysensors
 
-    conf = config[DOMAIN]
-    persistence = conf[CONF_PERSISTENCE]
-    version = conf[CONF_VERSION]
+    gateway_type = gateway_conf[CONF_GATEWAY_TYPE]
+    persistence_file = gateway_conf.get(CONF_PERSISTENCE_FILE)
+    persistence = bool(persistence_file)
+    version = gateway_conf[CONF_VERSION]
     device = gateway_conf[CONF_DEVICE]
-    baud_rate = gateway_conf[CONF_BAUD_RATE]
-    tcp_port = gateway_conf[CONF_TCP_PORT]
-    in_prefix = gateway_conf.get(CONF_TOPIC_IN_PREFIX, '')
-    out_prefix = gateway_conf.get(CONF_TOPIC_OUT_PREFIX, '')
 
-    if device == MQTT_COMPONENT:
-        if not await async_setup_component(hass, MQTT_COMPONENT, config):
-            return None
+    if gateway_type == CONF_MQTT:
         mqtt = hass.components.mqtt
-        retain = conf[CONF_RETAIN]
+        in_prefix = gateway_conf.get(CONF_TOPIC_IN_PREFIX, '')
+        out_prefix = gateway_conf.get(CONF_TOPIC_OUT_PREFIX, '')
+        retain = gateway_conf[CONF_RETAIN]
 
         def pub_callback(topic, payload, qos, retain):
             """Call MQTT publish function."""
@@ -112,35 +102,35 @@ async def _get_gateway(hass, config, gateway_conf, persistence_file):
                 mqtt.async_subscribe(topic, internal_callback, qos))
 
         gateway = mysensors.AsyncMQTTGateway(
-            pub_callback, sub_callback, in_prefix=in_prefix,
-            out_prefix=out_prefix, retain=retain, loop=hass.loop,
-            event_callback=None, persistence=persistence,
-            persistence_file=persistence_file,
-            protocol_version=version)
+            pub_callback, sub_callback, loop=hass.loop, event_callback=None,
+            persistence=persistence, persistence_file=persistence_file,
+            protocol_version=version, in_prefix=in_prefix,
+            out_prefix=out_prefix, retain=retain)
+
+    elif gateway_type == CONF_SERIAL:
+        baud_rate = gateway_conf[CONF_BAUD_RATE]
+
+        gateway = mysensors.AsyncSerialGateway(
+            device, loop=hass.loop, event_callback=None,
+            persistence=persistence, persistence_file=persistence_file,
+            protocol_version=version, baud=baud_rate)
+
+    elif gateway_type == CONF_TCP:
+        tcp_port = gateway_conf[CONF_TCP_PORT]
+
+        gateway = mysensors.AsyncTCPGateway(
+            device, loop=hass.loop, event_callback=None,
+            persistence=persistence, persistence_file=persistence_file,
+            protocol_version=version, port=tcp_port)
+
     else:
-        try:
-            await hass.async_add_job(is_serial_port, device)
-            gateway = mysensors.AsyncSerialGateway(
-                device, baud=baud_rate, loop=hass.loop,
-                event_callback=None, persistence=persistence,
-                persistence_file=persistence_file,
-                protocol_version=version)
-        except vol.Invalid:
-            try:
-                await hass.async_add_job(is_socket_address, device)
-                # valid ip address
-                gateway = mysensors.AsyncTCPGateway(
-                    device, port=tcp_port, loop=hass.loop, event_callback=None,
-                    persistence=persistence, persistence_file=persistence_file,
-                    protocol_version=version)
-            except vol.Invalid:
-                # invalid ip address
-                return None
+        return None
+
     gateway.metric = hass.config.units.is_metric
-    gateway.optimistic = conf[CONF_OPTIMISTIC]
+    gateway.optimistic = gateway_conf[CONF_OPTIMISTIC]
     gateway.device = device
     gateway.event_callback = _gw_callback_factory(hass)
-    gateway.nodes_config = gateway_conf[CONF_NODES]
+    gateway.nodes_config = gateway_conf.get(CONF_NODES, {})
     if persistence:
         await gateway.start_persistence()
 
