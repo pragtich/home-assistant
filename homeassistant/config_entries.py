@@ -351,6 +351,7 @@ class ConfigEntries:
 
         await entry.async_setup(
             self.hass, component=getattr(self.hass.components, component))
+        return True
 
     async def async_forward_entry_unload(self, entry, component):
         """Forward the unloading of an entry to a different component."""
