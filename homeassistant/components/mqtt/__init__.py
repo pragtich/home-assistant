@@ -461,6 +461,12 @@ async def async_setup(hass: HomeAssistantType, config: ConfigType) -> bool:
     return True
 
 
+async def async_setup_entry(hass, entry):
+    """Set up a config entry."""
+    # For now just return True. Allowing user configuration can be done later.
+    return True
+
+
 @attr.s(slots=True, frozen=True)
 class Subscription:
     """Class to hold data about an active subscription."""
