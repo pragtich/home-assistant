@@ -24,6 +24,7 @@ from .const import (
     MYSENSORS_CONST_SCHEMA, MYSENSORS_GATEWAYS, PLATFORM, SCHEMA,
     SIGNAL_CALLBACK, TYPE)
 from .device import get_mysensors_devices
+from .errors import SerialPortInvalid, SocketInvalid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,9 +39,12 @@ def is_serial_port(value):
         if value in ports:
             return value
         else:
-            raise vol.Invalid("{} is not a serial port".format(value))
+            raise SerialPortInvalid("{} is not a serial port".format(value))
     else:
-        return cv.isdevice(value)
+        try:
+            return cv.isdevice(value)
+        except vol.Invalid as exc:
+            raise SerialPortInvalid(*exc.args)
 
 
 def is_socket_address(value):
@@ -49,7 +53,7 @@ def is_socket_address(value):
         socket.getaddrinfo(value, None)
         return value
     except OSError:
-        raise vol.Invalid(
+        raise SocketInvalid(
             "{} is not a valid domain name or ip address".format(value))
 
 

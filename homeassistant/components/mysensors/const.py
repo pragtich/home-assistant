@@ -6,6 +6,8 @@ from homeassistant.components.mqtt import (
 from homeassistant.const import CONF_OPTIMISTIC
 import homeassistant.helpers.config_validation as cv
 
+from .errors import PersistenceFileInvalid
+
 ATTR_DEVICES = 'devices'
 
 CONF_BAUD_RATE = 'baud_rate'
@@ -42,7 +44,7 @@ def is_persistence_file(value):
     if value.endswith(('.json', '.pickle')):
         return value
     else:
-        raise vol.Invalid(
+        raise PersistenceFileInvalid(
             '{} does not end in either `.json` or `.pickle`'.format(value))
 
 
@@ -80,8 +82,8 @@ GATEWAY_SCHEMA = SELECT_GATEWAY_SCHEMA.extend({
 
 MQTT_GATEWAY_SCHEMA = COMMON_GATEWAY_SCHEMA.extend({
     vol.Optional(CONF_RETAIN, default=True): vol.Coerce(bool),
-    vol.Optional(CONF_TOPIC_IN_PREFIX, default=''): str,
-    vol.Optional(CONF_TOPIC_OUT_PREFIX, default=''): str,
+    vol.Optional(CONF_TOPIC_IN_PREFIX): str,
+    vol.Optional(CONF_TOPIC_OUT_PREFIX): str,
 })
 
 SERIAL_GATEWAY_SCHEMA = COMMON_GATEWAY_SCHEMA.extend({

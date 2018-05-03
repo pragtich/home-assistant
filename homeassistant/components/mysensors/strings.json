@@ -22,6 +22,12 @@
                     "version": "Version"
                 }
             }
+        },
+        "error": {
+            "invalid_config": "Invalid config specified",
+            "invalid_persistence_file": "Invalid persistence file specified",
+            "invalid_serial_port": "Invalid serial port specified",
+            "invalid_socket": "Invalid socket specified"
         }
     }
 }
