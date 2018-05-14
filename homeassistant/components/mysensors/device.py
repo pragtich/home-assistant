@@ -38,6 +38,7 @@ class MySensorsDevice:
         child = gateway.sensors[node_id].children[child_id]
         self.child_type = child.type
         self._values = {}
+        self._gateway_id = None
 
     @property
     def name(self):
@@ -66,6 +67,8 @@ class MySensorsDevice:
 
     async def async_update(self):
         """Update the controller with the latest value from a sensor."""
+        if self._gateway_id is None:
+            self._gateway_id = await self.gateway.get_gateway_id()
         node = self.gateway.sensors[self.node_id]
         child = node.children[self.child_id]
         set_req = self.gateway.const.SetReq
@@ -95,6 +98,14 @@ class MySensorsEntity(MySensorsDevice, Entity):
     def available(self):
         """Return true if entity is available."""
         return self.value_type in self._values
+
+    @property
+    def unique_id(self):
+        """Return a unique ID."""
+        if self._gateway_id is None:
+            return None
+        return '{}_{}_{}_{}'.format(
+            self._gateway_id, self.node_id, self.child_id, self.value_type)
 
     @callback
     def async_update_callback(self):
